@@ -1,12 +1,13 @@
 # Autonomous Memory
 
-omp supports five memory modes. Memory is disabled by default; select one backend via `/settings` or `config.yml`:
+omp supports six memory modes. Memory is disabled by default; select one backend via `/settings` or `config.yml`:
 
 | `memory.backend` | Storage and behavior                                                   | Guide                                                   |
 | ---------------- | ---------------------------------------------------------------------- | ------------------------------------------------------- |
 | `off`            | No memory backend                                                      | —                                                       |
 | `local`          | Project-scoped summaries and lessons generated from persisted sessions | This page                                               |
 | `hindsight`      | Remote, bank-scoped Hindsight memory                                   | [Hindsight](#hindsight-remote-backend)                  |
+| `mem0`           | Self-hosted Mem0 OSS REST memory with project-scoped recall and retention | [Mem0](#mem0-oss-remote-backend) |
 | `mnemopi`        | Local Mnemopi SQLite memory                                            | [Mnemopi memory backend](./mnemosyne-memory-backend.md) |
 | `sharpshooter`   | Friction-gated project decision files (architecture/product/style), consolidated in the background | [Sharpshooter](#sharpshooter-backend) |
 
@@ -43,7 +44,7 @@ The agent can read memory files directly using `memory://` URLs with the `read` 
 
 The `memory://<memory-id>` form returns the full stored row rather than the clipped recall preview (recall content that exceeds the preview cap ends with a trailing `…`); agents are instructed to read it before any `memory_edit update`.
 
-The `memory://root[/…]` rows are file-backed and only exist with `memory.backend: local`, which populates the on-disk memory root via the consolidation pipeline. Under `hindsight` or `mnemopi` the root is never written, so those URLs do not resolve — use `recall`/`reflect` (and `read memory://<memory-id>` on `mnemopi`) instead.
+The `memory://root[/…]` rows are file-backed and only exist with `memory.backend: local`, which populates the on-disk memory root via the consolidation pipeline. Other backends do not resolve these URLs. Use their memory tools instead; `memory://<memory-id>` is available only with `mnemopi`.
 
 ### `/memory` slash command
 
@@ -154,6 +155,61 @@ The primary session recalls on its first model turn (`hindsight.autoRecall: true
 Recall is injected as background context, not instructions, and recalled memory is also available as extra context during compaction. The first-turn recall is stored in the session file, so resuming, switching to, or forking the session sends it unchanged instead of recalling again; a context reset, a different bank or tag filter, or a branch that edits the first prompt recalls afresh. Hindsight memories cannot be looked up by id, so changes to them since the recall are not reported. Mental models are still reloaded when a new process starts. Selecting Hindsight exposes `recall`, `retain`, and `reflect`; `memory_edit` is not available because upstream Hindsight memories are not edited through this backend.
 
 `/memory view`, `/memory stats`, `/memory diagnose`, and `/memory enqueue` operate through the active Hindsight state. `/memory clear` first drains pending retains, then clears only the local session state and recall cache. It **does not delete the server-side bank**; delete that bank with the Hindsight UI or API.
+
+## Mem0 OSS remote backend
+
+This native backend connects directly to the [self-hosted Mem0 OSS REST server](https://github.com/mem0ai/mem0/tree/v2.2.1/server), tested against `mem0ai==2.2.1`. It does not use MCP, embed the Python engine, or support the separate Mem0 Platform API. Configure extraction, embeddings, and storage on the server; omp's model roles do not configure the Mem0 server.
+
+Start and configure the server using its upstream instructions, then select Mem0 in `/settings` → Memory or use:
+
+```yaml
+memory:
+  backend: mem0
+mem0:
+  apiUrl: http://127.0.0.1:8889
+  userId: my-omp
+  autoRecall: true
+  autoRetain: true
+```
+
+The URL must match your actual server. The upstream Compose default is port `8888`, which also defaults to Hindsight's port; use a different published port if running both. Set `MEM0_API_KEY` to the server's API key; requests use `X-API-Key`. Use HTTPS when connecting beyond loopback. Selecting Mem0 does not migrate or delete another backend's memories.
+
+To run a source checkout without replacing your installed `omp`, follow the repository's build prerequisites, run `bun install --frozen-lockfile` and `bun run build:native`, then launch `bun packages/coding-agent/src/cli.ts --config /path/to/mem0.yml`. Avoid `bun run setup` if you do not want its global-link step.
+
+### Scope and lifecycle
+
+- The Mem0 `user_id` is `<mem0.userId>:<SHA-256 of canonical project path>`. The primary repository root is used when available; linked worktrees share it. Outside a repository, the canonical cwd is used. Same-named projects at different paths remain separate. Moving a checkout to a new path changes its scope.
+- A namespace and canonical path identify the same memory across sessions and omp profiles. Set a unique `mem0.userId` on a shared server. Scope filters are not server-side tenant authorization; protect access to the server and its credentials.
+- Automatic recall searches before each user prompt. Context is character-bounded and treated as untrusted background data. An empty or failed search removes the previous turn's recalled context; cancellation or an owner change prevents a staged result from being committed.
+- Automatic retention sends new user/assistant text after each completed primary turn with `infer: true`. Existing transcript entries are the starting cursor, not a backfill source. Tool results, thinking, and injected custom messages are excluded. Common credential-shaped tokens are redacted, but this is not a guarantee that arbitrary confidential text is safe to upload; disable `mem0.autoRetain` where appropriate.
+- Writes are serialized and in-memory. Disposal drains already queued writes; network requests have configured deadlines. Failures are surfaced without stopping the main agent. This is not a durable delivery queue: unacknowledged writes are not replayed after restart. `/memory sync` retries outstanding transcript content in the current live state; use explicit `retain` to recover older unsaved facts.
+- Subagents share the parent's scope for explicit tools, without automatic recall or transcript retention. Closing an alias does not close the parent. Restricted sessions keep the existing SDK policy that disables memory initialization.
+
+### Tools and maintenance
+
+`retain` waits for Mem0 and reports the server's actual ADD/UPDATE count, including zero when extraction deduplicates everything; DELETE events are reported separately. `recall` performs scoped semantic search. The extension memory runtime also exposes `save`, `search`, and `status`.
+
+`/memory stats` and `/memory diagnose` probe authenticated connectivity and report scope, pending writes, and the last write error. They do not claim a total memory count from a limited listing. `/memory queue` shows pending write count; `/memory sync` and `/memory enqueue` retain new transcript content.
+
+**`/memory clear` deletes all remote memories in the current project scope**, after pending writes finish. The OSS server requires an admin API key for this operation. It never calls `/reset` or an unscoped delete, and a failure is reported rather than displayed as successful clearing. The current transcript is not automatically re-uploaded after a successful clear.
+
+There is no native `reflect`, `memory_edit`, `learn`, `memory://` lookup, or global-scope write in this backend. Use the Mem0 server UI/API for individual edits or deletion. No local or cloud fallback runs when the configured service is unavailable.
+
+### Settings
+
+| Setting | Default | Behavior |
+| --- | --- | --- |
+| `mem0.apiUrl` | unset | OSS server base URL; required to initialize |
+| `mem0.apiKey` | unset | Credential sent as `X-API-Key` |
+| `mem0.userId` | `omp` | Non-empty namespace, combined with the project path hash |
+| `mem0.autoRecall` | `true` | Recall before each primary user prompt |
+| `mem0.autoRetain` | `true` | Retain new primary conversation text at completed turns |
+| `mem0.recallLimit` | `10` | Requested `top_k`, clamped to 1–100 |
+| `mem0.recallMaxChars` | `6000` | Maximum rendered recall characters, minimum 256 |
+| `mem0.recallTimeoutMs` | `5000` | Search and connectivity deadline, minimum 1 ms |
+| `mem0.retainTimeoutMs` | `60000` | Write and clear deadline, minimum 1 ms |
+
+`MEM0_API_URL`, `MEM0_API_KEY`, and `MEM0_USER_ID` override their corresponding settings. Live `mem0.*` changes rebind the active backend and drain outgoing queued writes without backfilling the transcript into the new scope.
 
 ## Sharpshooter backend
 

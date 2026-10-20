@@ -6,6 +6,7 @@ import type { ModelRegistry } from "../config/model-registry";
 import { all as allSettings, combine, type Derived } from "../config/registry";
 import type { Settings } from "../config/settings";
 import type { HindsightSessionState } from "../hindsight/state";
+import { getMem0SessionState, releaseMem0Session } from "../mem0/state";
 import { resolveMemoryBackend } from "../memory-backend/resolve";
 import type { MemoryBackendStartOptions } from "../memory-backend/types";
 import type { MnemopiSessionState } from "../mnemopi/state";
@@ -14,7 +15,7 @@ import { releaseSharpshooterSession } from "../sharpshooter/backend";
 import { cfgMemoryBackend } from "../memory-backend/settings";
 
 /** Id prefixes of the memory backends' own settings; their live edits reconfigure the active backend. */
-const MEMORY_BACKEND_SETTING_PREFIXES: readonly string[] = ["hindsight.", "mnemopi.", "sharpshooter."];
+const MEMORY_BACKEND_SETTING_PREFIXES: readonly string[] = ["hindsight.", "mnemopi.", "mem0.", "sharpshooter."];
 
 let memorySettings: Derived<Record<string, unknown>> | undefined;
 
@@ -231,6 +232,9 @@ export class SessionMemory {
 		const hadPromotedMemoryPrompt = this.#baseSystemPromptBeforeMemoryPromotion !== undefined;
 		const resetHindsight = this.#resetHindsightConversationTrackingIfHindsight();
 		const resetMnemopi = this.#resetMnemopiConversationTrackingIfMnemopi();
+		const session = this.#host.memoryBackendSession();
+		const mem0 = getMem0SessionState(session);
+		if (mem0?.session === session) mem0.resetConversationTracking();
 		if (hadPromotedMemoryPrompt) {
 			this.#host.setBaseSystemPrompt(this.#baseSystemPromptBeforeMemoryPromotion!);
 			this.#baseSystemPromptBeforeMemoryPromotion = undefined;
@@ -261,6 +265,7 @@ export class SessionMemory {
 
 	async #disposeMemoryBackendState(consolidateMnemopi = true, retainMnemopi = true): Promise<void> {
 		this.cancelLocalMemoryStartup();
+		await releaseMem0Session(this.#host.memoryBackendSession());
 		try {
 			releaseSharpshooterSession(this.#host.memoryBackendSession());
 		} catch (error) {

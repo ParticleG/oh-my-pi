@@ -56,13 +56,42 @@ export class MemoryRetainTool implements AgentTool<MemoryRetainSchema, MemoryRet
 
 	static createIf(session: ToolSession): MemoryRetainTool | null {
 		const backend = cfgMemoryBackend.get(session.settings);
-		if (backend !== "hindsight" && backend !== "mnemopi") return null;
+		if (backend !== "hindsight" && backend !== "mnemopi" && backend !== "mem0") return null;
 		if (backend === "hindsight" && !isHindsightConfigured(loadHindsightConfig(session.settings))) return null;
 		return new MemoryRetainTool(session);
 	}
 
-	async execute(_id: string, params: MemoryRetainParams): Promise<AgentToolResult<MemoryRetainDetails>> {
+	async execute(
+		_id: string,
+		params: MemoryRetainParams,
+		signal?: AbortSignal,
+	): Promise<AgentToolResult<MemoryRetainDetails>> {
 		const backend = cfgMemoryBackend.get(this.session.settings);
+		if (backend === "mem0") {
+			const state = this.session.getMem0SessionState?.();
+			if (!state) throw new Error("Mem0 backend is not initialised for this session.");
+			if (params.items.some(item => item.scope === "global" || !item.content.trim())) {
+				throw new Error("Mem0 retain requires non-empty project-scoped items.");
+			}
+			const ids: string[] = [];
+			const messages: string[] = [];
+			for (const [index, item] of params.items.entries()) {
+				try {
+					const result = await state.save(item, signal);
+					ids.push(...(result.ids ?? []));
+					if (result.message) messages.push(result.message);
+				} catch (error) {
+					throw new Error(
+						`Mem0 retain failed at item ${index + 1}; earlier completed writes: ${JSON.stringify(ids)}. Later items were not attempted.`,
+						{ cause: error },
+					);
+				}
+			}
+			return {
+				content: [{ type: "text", text: messages.join("\n") }],
+				details: { count: ids.length },
+			};
+		}
 		if (backend === "mnemopi") {
 			const state = this.session.getMnemopiSessionState?.();
 			if (!state) {

@@ -216,7 +216,7 @@ Other harnesses bolt on gh_issue_view, gh_pr_view, gh_search — each with its o
 
 ### 13 · Memory the agent curates
 
-The agent remembers your codebase between sessions. It writes facts mid-run with retain, captures reusable lessons with learn, pulls them back with recall, and compresses each session into a mental model that loads on the first turn of the next one. Pick the engine with `memory.backend` — local, Hindsight, or Mnemopi. Project-scoped by default, so what it learns about this repo stays with this repo.
+Long-term memory is optional. Select `memory.backend` to use local summaries, Hindsight, self-hosted Mem0 OSS, Mnemopi SQLite, or Sharpshooter project decisions. Available tools and scoping depend on the backend; see the [memory guide](docs/memory.md). Mem0 provides native project-scoped recall and retention without MCP.
 
 ### 14 · ACP: editor-drivable agent
 

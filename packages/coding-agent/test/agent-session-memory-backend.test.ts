@@ -11,6 +11,7 @@ import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { hindsightBackend, rebindMemoryBackendForCwd } from "@oh-my-pi/pi-coding-agent/hindsight/backend";
+import { getMem0SessionState } from "@oh-my-pi/pi-coding-agent/mem0/state";
 import { MEMORY_BACKEND_TOOL_NAMES } from "@oh-my-pi/pi-coding-agent/memory-backend/tool-names";
 import { computeMnemopiBankScope } from "@oh-my-pi/pi-coding-agent/mnemopi/config";
 import { mnemopiBackend } from "@oh-my-pi/pi-coding-agent/mnemopi/backend";
@@ -110,6 +111,45 @@ describe("AgentSession memory backend lifecycle", () => {
 		});
 		return session;
 	}
+
+	it.each([200, 503])(
+		"removes the previous Mem0 prompt context after an empty or failed recall (%i)",
+		async statusCode => {
+			let recalls = 0;
+			const server = Bun.serve({
+				hostname: "127.0.0.1",
+				port: 0,
+				fetch() {
+					recalls++;
+					if (recalls === 1)
+						return Response.json({ results: [{ id: "old", memory: "The project database is SQLite." }] });
+					return Response.json({ results: [] }, { status: statusCode });
+				},
+			});
+			try {
+				settings = Settings.isolated({
+					"memory.backend": "mem0",
+					"mem0.apiUrl": server.url.href,
+					"mem0.autoRetain": false,
+					"compaction.enabled": false,
+				});
+				const current = createSession(async () =>
+					cfgMemoryBackend.get(settings) === "mem0" ? [createTool("recall"), createTool("retain")] : [],
+				);
+				await current.applyMemoryBackend();
+				await current.prompt("Which database did we choose?");
+				expect(current.agent.state.systemPrompt.join("\n")).toContain("The project database is SQLite.");
+				await current.prompt("What is the current database?");
+				expect(current.agent.state.systemPrompt.join("\n")).not.toContain("The project database is SQLite.");
+				cfgMemoryBackend.override(settings, "off");
+				await current.settleMemoryBackend();
+				expect(getMem0SessionState(current)).toBeUndefined();
+				expect(current.getToolByName("retain")).toBeUndefined();
+			} finally {
+				server.stop(true);
+			}
+		},
+	);
 
 	async function startMemoryCompletion(models: Model<Api>[], thinking: readonly (string | undefined)[] = []) {
 		const selectors = models.map((model, index) => {

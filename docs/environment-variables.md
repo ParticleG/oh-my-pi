@@ -550,6 +550,18 @@ are ignored.
 
 `PI_NO_PTY` is also set internally when CLI `--no-pty` is used.
 
+### Mem0 OSS memory backend
+
+These non-empty, trimmed environment variables override the corresponding settings. They configure the native OSS REST client, not the separate Mem0 Platform service:
+
+| Variable | Setting overridden | Behavior |
+| --- | --- | --- |
+| `MEM0_API_URL` | `mem0.apiUrl` | Required server base URL when the setting is unset |
+| `MEM0_API_KEY` | `mem0.apiKey` | Secret `X-API-Key` credential; unset by default |
+| `MEM0_USER_ID` | `mem0.userId` | Namespace combined with the canonical project path hash; default `omp` |
+
+See [Mem0 setup, lifecycle, and limits](./memory.md#mem0-oss-remote-backend).
+
 ---
 
 ## 6) Storage and config root paths

@@ -26,6 +26,7 @@ import { LspTool } from "../lsp";
 import type { MCPManager } from "../mcp";
 import { MEMORY_BACKEND_TOOL_NAMES } from "../memory-backend/tool-names";
 import type { MnemopiSessionState } from "../mnemopi/state";
+import type { Mem0SessionState } from "../mem0/state";
 import type { PlanModeState } from "../plan-mode/state";
 import type { AgentLifecycleManager } from "../registry/agent-lifecycle";
 import type { AgentRegistry } from "../registry/agent-registry";
@@ -357,6 +358,8 @@ export interface ToolSession {
 	getHindsightSessionState?: () => HindsightSessionState | undefined;
 	/** Get Mnemopi runtime state for this agent session. */
 	getMnemopiSessionState?: () => MnemopiSessionState | undefined;
+	/** Get Mem0 runtime state, shared with the parent for subagents. */
+	getMem0SessionState?: () => Mem0SessionState | undefined;
 	/** Agent identity used for IRC routing. Returns the registry id (e.g. "Main", "AuthLoader"). */
 	getAgentId?: () => string | null;
 	/** Parent cache identity for sibling sharing, only when the parent model opts in. */
@@ -705,8 +708,10 @@ export async function resolveBuiltinToolPlan(session: ToolSession, toolNames?: s
 		) {
 			requestedTools.push("ast_edit");
 		}
-		if (["hindsight", "mnemopi"].includes(cfgMemoryBackend.get(session.settings))) {
-			for (const name of ["recall", "retain", "reflect"]) {
+		if (["hindsight", "mnemopi", "mem0"].includes(cfgMemoryBackend.get(session.settings))) {
+			const memoryTools =
+				cfgMemoryBackend.get(session.settings) === "mem0" ? ["recall", "retain"] : ["recall", "retain", "reflect"];
+			for (const name of memoryTools) {
 				if (!requestedTools.includes(name)) requestedTools.push(name);
 			}
 		}
@@ -774,9 +779,10 @@ export async function resolveBuiltinToolPlan(session: ToolSession, toolNames?: s
 				cfgLaunchEnabled.get(session.settings)
 			);
 		}
-		if (name === "retain" || name === "recall" || name === "reflect") {
-			return ["hindsight", "mnemopi"].includes(cfgMemoryBackend.get(session.settings));
+		if (name === "retain" || name === "recall") {
+			return ["hindsight", "mnemopi", "mem0"].includes(cfgMemoryBackend.get(session.settings));
 		}
+		if (name === "reflect") return ["hindsight", "mnemopi"].includes(cfgMemoryBackend.get(session.settings));
 		if (name === "memory_edit") return cfgMemoryBackend.get(session.settings) === "mnemopi";
 		if (name === "manage_skill")
 			return (

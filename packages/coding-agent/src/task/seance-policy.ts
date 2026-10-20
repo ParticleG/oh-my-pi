@@ -34,5 +34,6 @@ export function seanceIsolationOptions(cwd: string) {
 		localProtocolOptions: undefined,
 		parentHindsightSessionState: undefined,
 		parentMnemopiSessionState: undefined,
+		parentMem0SessionState: undefined,
 	} satisfies Partial<CreateAgentSessionOptions>;
 }

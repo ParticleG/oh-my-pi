@@ -162,7 +162,10 @@ import { MCP_CONNECTION_STATUS_EVENT_CHANNEL, type McpConnectionStatusEvent } fr
 import { resolveMCPToolAlias } from "./mcp/tool-bridge";
 import { createSessionMemoryRuntimeContext, resolveMemoryBackend } from "./memory-backend";
 import { MEMORY_BACKEND_TOOL_NAMES } from "./memory-backend/tool-names";
+import { cfgMemoryBackend } from "./memory-backend/settings";
 import type { MnemopiSessionState } from "./mnemopi/state";
+import { getMem0SessionState } from "./mem0/state";
+import type { Mem0SessionState } from "./mem0/state";
 import mcpXdevGuidanceTemplate from "./prompts/system/mcp-xdev-guidance.md" with { type: "text" };
 import lateDiagnosticTemplate from "./prompts/tools/lsp-late-diagnostic.md" with { type: "text" };
 import { AgentLifecycleManager } from "./registry/agent-lifecycle";
@@ -813,6 +816,8 @@ export interface CreateAgentSessionOptions {
 	parentHindsightSessionState?: HindsightSessionState;
 	/** Parent Mnemopi state: subagents alias it; a top-level fork (`/tan`) inherits its delivered recall. */
 	parentMnemopiSessionState?: MnemopiSessionState;
+	/** Parent Mem0 state to share for subagent memory tools, without automatic retention. */
+	parentMem0SessionState?: Mem0SessionState;
 	/** Pre-allocated agent identity for IRC routing. Default: "Main" for top-level, parentTaskPrefix-derived for sub. */
 	agentId?: string;
 	/** Display name for the agent in IRC. Default: "main" or "sub". */
@@ -2406,6 +2411,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			isDisposed: () => session?.isDisposed ?? false,
 			getHindsightSessionState: () => session?.getHindsightSessionState(),
 			getMnemopiSessionState: () => session?.getMnemopiSessionState(),
+			getMem0SessionState: () => getMem0SessionState(session),
 			getAgentId: () => resolvedAgentId,
 			getPromptCacheKey: () => {
 				if (!session) return undefined;
@@ -5327,6 +5333,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 				taskDepth,
 				parentHindsightSessionState: options.parentHindsightSessionState,
 				parentMnemopiSessionState: options.parentMnemopiSessionState,
+				parentMem0SessionState: options.parentMem0SessionState,
 			});
 		};
 
@@ -5401,8 +5408,9 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 		// stop. When it is enabled at startup and a memory backend is selected,
 		// install that backend's per-session state first so the capture turn's
 		// `learn` tool observes the same initialized state as normal memory tools.
-		// Other sessions keep memory startup in the background to preserve the
-		// existing startup profile.
+		// Mem0 startup only binds local state (no HTTP); await it so the first SDK
+		// recall/retain call cannot race initialization. Other sessions retain their
+		// existing background startup profile.
 		//
 		// The controller is installed for every top-level session and gates each
 		// stop on the live `autolearn.enabled`, so enabling or disabling it
@@ -5411,7 +5419,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 		// tools per run. The subscription lives for the session's lifetime; the
 		// reference is intentionally discarded (the listener retains it).
 		if (!restrictToolNames) {
-			if (cfgAutolearnEnabled.get(settings) && taskDepth === 0) {
+			if ((cfgAutolearnEnabled.get(settings) && taskDepth === 0) || cfgMemoryBackend.get(settings) === "mem0") {
 				await logger.time("startMemoryStartupTask", startMemoryBackend);
 			} else {
 				void logger.time("startMemoryStartupTask", startMemoryBackend);
