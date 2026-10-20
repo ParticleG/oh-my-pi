@@ -22,6 +22,7 @@ export class MemoryRecallTool implements AgentTool<typeof memoryRecallSchema> {
 	readonly label = "Recall";
 	get description(): string {
 		return prompt.render(recallDescription, {
+			mem0: cfgMemoryBackend.get(this.session.settings) === "mem0",
 			toolRefs: sessionMemoryToolRefs(this.session),
 		});
 	}
