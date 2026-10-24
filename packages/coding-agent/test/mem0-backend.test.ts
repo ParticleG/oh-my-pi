@@ -18,18 +18,28 @@ import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manage
 import type { ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
 import { MemoryRecallTool } from "@oh-my-pi/pi-coding-agent/tools/memory-recall";
 import { MemoryRetainTool } from "@oh-my-pi/pi-coding-agent/tools/memory-retain";
-import { TempDir } from "@oh-my-pi/pi-utils";
+import { getThemeByName } from "@oh-my-pi/pi-tui/theme";
+import { recallToolRenderer } from "@oh-my-pi/pi-tui/tools/memory";
+import { sanitizeText, TempDir } from "@oh-my-pi/pi-utils";
 import { createInMemoryAuthStorage } from "./helpers/agent-session-setup";
+import { restoreEnvValue } from "./helpers/settings-test-state";
 
 describe("Mem0 OSS backend", () => {
 	let server: Server<undefined>;
 	let temp: TempDir;
 	let settings: Settings;
+	let mem0Env: Record<string, string | undefined>;
 	let respond: (request: Request) => Response | Promise<Response>;
 	let requests: Array<{ method: string; path: string; body: Record<string, unknown>; key: string | null }>;
 	const sessions: AgentSession[] = [];
 
 	beforeEach(() => {
+		mem0Env = {
+			MEM0_API_URL: Bun.env.MEM0_API_URL,
+			MEM0_API_KEY: Bun.env.MEM0_API_KEY,
+			MEM0_USER_ID: Bun.env.MEM0_USER_ID,
+		};
+		for (const key of Object.keys(mem0Env)) restoreEnvValue(key, undefined);
 		temp = TempDir.createSync("@mem0-backend-");
 		requests = [];
 		respond = () => Response.json({ results: [] });
@@ -54,9 +64,13 @@ describe("Mem0 OSS backend", () => {
 	});
 
 	afterEach(async () => {
-		for (const session of sessions.splice(0)) await releaseMem0Session(session);
-		server.stop(true);
-		temp.removeSync();
+		try {
+			for (const session of sessions.splice(0)) await releaseMem0Session(session);
+			server.stop(true);
+			temp.removeSync();
+		} finally {
+			for (const [key, value] of Object.entries(mem0Env)) restoreEnvValue(key, value);
+		}
 	});
 
 	function createState(existingText?: string) {
@@ -160,13 +174,49 @@ describe("Mem0 OSS backend", () => {
 		const { state, tools } = createState();
 		respond = () =>
 			Response.json({ results: [{ id: "prior", memory: "Use Bun", user_id: state.config.userId, score: 0.8 }] });
-		const result = await new MemoryRecallTool(tools).execute("recall", { query: "runtime?" });
-		expect(result.content).toEqual([{ type: "text", text: '{"id":"prior","memory":"Use Bun"}' }]);
+		await new MemoryRecallTool(tools).execute("recall", { query: "runtime?" });
 		expect(requests[0]!.body.filters).toEqual({ user_id: state.config.userId });
 		expect(requests[0]!.body).not.toHaveProperty("run_id");
 		respond = () =>
 			Response.json({ results: [{ id: "other", memory: "Private fact", user_id: "different-project" }] });
 		await expect(state.client.search("runtime?")).rejects.toThrow("outside the requested project scope");
+	});
+
+	it.each([0, 2])("keeps %i recall hits consistent across model and tool views", async count => {
+		const { tools } = createState();
+		const memories = [
+			{ id: "first", memory: "Use Bun for the application runtime." },
+			{ id: "second", memory: "Use PostgreSQL for the application database." },
+		].slice(0, count);
+		respond = () => Response.json({ results: memories });
+		const args = { query: "application stack?" };
+		const result = await new MemoryRecallTool(tools).execute("recall", args);
+		const options = { expanded: false, isPartial: false };
+		const view = recallToolRenderer.describeResult(result, options, args)!;
+		const theme = (await getThemeByName("dark"))!;
+		const collapsed = sanitizeText(
+			recallToolRenderer.renderResult(result, options, theme, args).render(200).join("\n"),
+		);
+		const expanded = sanitizeText(
+			recallToolRenderer
+				.renderResult(result, { ...options, expanded: true }, theme, args)
+				.render(200)
+				.join("\n"),
+		);
+
+		expect(result.useless).toBe(count === 0);
+		expect(view.tone === "warning").toBe(count === 0);
+		if (count === 0) {
+			expect(view.body ?? []).toEqual([]);
+		} else {
+			expect(collapsed.split("\n")[0]).toContain(String(count));
+			expect(JSON.stringify(view.head)).toContain(String(count));
+			for (const memory of memories) {
+				expect(collapsed).not.toContain(memory.memory);
+				expect(expanded).toContain(memory.memory);
+				expect(JSON.stringify(view.body)).toContain(memory.memory);
+			}
+		}
 	});
 
 	it("does not turn authentication or malformed responses into empty recall", async () => {

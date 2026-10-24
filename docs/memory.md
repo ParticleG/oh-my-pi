@@ -160,7 +160,9 @@ Recall is injected as background context, not instructions, and recalled memory 
 
 This native backend connects directly to the [self-hosted Mem0 OSS REST server](https://github.com/mem0ai/mem0/tree/v2.2.1/server), tested against `mem0ai==2.2.1`. It does not use MCP, embed the Python engine, or support the separate Mem0 Platform API. Configure extraction, embeddings, and storage on the server; omp's model roles do not configure the Mem0 server.
 
-Start and configure the server using its upstream instructions, then select Mem0 in `/settings` → Memory or use:
+Mem0 uses the same native settings registry and persistent `config.yml` as Hindsight. A separate Mem0 configuration file is not required.
+
+After configuring the server, add the following blocks to `~/.omp/agent/config.yml` (or the active profile's configuration file), or configure them through `/settings` → Memory:
 
 ```yaml
 memory:
@@ -172,9 +174,13 @@ mem0:
   autoRetain: true
 ```
 
-The URL must match your actual server. The upstream Compose default is port `8888`, which also defaults to Hindsight's port; use a different published port if running both. Set `MEM0_API_KEY` to the server's API key; requests use `X-API-Key`. Use HTTPS when connecting beyond loopback. Selecting Mem0 does not migrate or delete another backend's memories.
+The URL must match your actual server. The upstream Compose default is port `8888`, which also defaults to Hindsight's port; use a different published port if running both. Store the server credential in `mem0.apiKey` through the settings panel, or set `MEM0_API_KEY` to override the file value; requests use `X-API-Key`. Use HTTPS when connecting beyond loopback. Selecting Mem0 does not migrate or delete another backend's memories.
 
-To run a source checkout without replacing your installed `omp`, follow the repository's build prerequisites, run `bun install --frozen-lockfile` and `bun run build:native`, then launch `bun packages/coding-agent/src/cli.ts --config /path/to/mem0.yml`. Avoid `bun run setup` if you do not want its global-link step.
+A Mem0-capable build also supports `omp config get` and `omp config set` for all `mem0.*` settings. These use the normal configuration file; `hindsight` and `mem0` sections can coexist, while `memory.backend` selects the active backend. The settings panel and `omp config list` mask API keys; an explicit `omp config get mem0.apiKey` reveals the value, so do not paste its output into logs or chat.
+
+To run a source checkout without replacing your installed `omp`, follow the repository's build prerequisites, run `bun install --frozen-lockfile` and `bun run build:native`, then launch `bun packages/coding-agent/src/cli.ts`. It reads the normal configuration. Avoid `bun run setup` if you do not want its global-link step.
+
+For an isolated trial, append `--config /path/to/mem0.yml`. This is a generic, process-local configuration overlay, not a Mem0-specific loader. If the installed `omp` does not support Mem0, keep the trial in an overlay rather than selecting Mem0 in its shared global configuration. Once using a Mem0-capable build for normal work, merge the tested values into the normal configuration, preserving the existing `autoRecall`, `autoRetain`, and `userId` values. Remove `--config` from the launch command afterward: overlay values take precedence over the main file and would otherwise override later settings-panel or CLI edits.
 
 ### Scope and lifecycle
 
@@ -194,6 +200,18 @@ To run a source checkout without replacing your installed `omp`, follow the repo
 **`/memory clear` deletes all remote memories in the current project scope**, after pending writes finish. The OSS server requires an admin API key for this operation. It never calls `/reset` or an unscoped delete, and a failure is reported rather than displayed as successful clearing. The current transcript is not automatically re-uploaded after a successful clear.
 
 There is no native `reflect`, `memory_edit`, `learn`, `memory://` lookup, or global-scope write in this backend. Use the Mem0 server UI/API for individual edits or deletion. No local or cloud fallback runs when the configured service is unavailable.
+
+### Manual verification
+
+Use an isolated test project and disable `mem0.autoRecall` and `mem0.autoRetain` before testing explicit tools:
+
+1. Run `/memory diagnose` and check the backend, connectivity, and project scope.
+2. Use `retain` to store a fresh synthetic marker and confirm an actual server-side addition or update.
+3. Restart with `--no-session` in the same project directory, then use `recall` to ask for the marker without including its value in the query.
+4. Inspect the tool result, not just the assistant's final answer. A nonempty result includes a count header and quoted memory records; the tool card reports `N found`, and expanding it reveals the records.
+5. Clear only the isolated test scope with `/memory clear`, then confirm that another explicit recall returns no matches.
+
+A correct assistant answer alone does not prove successful recall. Restart source-launched sessions after updating the checkout so new tool calls use the updated implementation.
 
 ### Settings
 

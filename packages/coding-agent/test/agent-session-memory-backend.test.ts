@@ -26,6 +26,7 @@ import { tinyModelClient } from "@oh-my-pi/pi-coding-agent/tiny/title-client";
 import { resetMemoryForTests } from "@oh-my-pi/pi-mnemopi";
 import { getProjectAgentDir, getProjectDir, setProjectDir, TempDir } from "@oh-my-pi/pi-utils";
 import { createInMemoryAuthStorage } from "./helpers/agent-session-setup";
+import { restoreEnvValue } from "./helpers/settings-test-state";
 
 import { cfgAutolearnEnabled } from "@oh-my-pi/pi-coding-agent/autolearn/settings";
 import { cfgHindsightApiUrl, cfgHindsightMentalModelsEnabled } from "@oh-my-pi/pi-coding-agent/hindsight/settings";
@@ -49,8 +50,15 @@ describe("AgentSession memory backend lifecycle", () => {
 	let session: AgentSession | undefined;
 	let settings: Settings;
 	let tempDir: TempDir;
+	let mem0Env: Record<string, string | undefined>;
 
 	beforeEach(() => {
+		mem0Env = {
+			MEM0_API_URL: Bun.env.MEM0_API_URL,
+			MEM0_API_KEY: Bun.env.MEM0_API_KEY,
+			MEM0_USER_ID: Bun.env.MEM0_USER_ID,
+		};
+		for (const key of Object.keys(mem0Env)) restoreEnvValue(key, undefined);
 		tempDir = TempDir.createSync("@memory-backend-lifecycle-");
 		authStorage = createInMemoryAuthStorage();
 		settings = Settings.isolated({
@@ -62,14 +70,18 @@ describe("AgentSession memory backend lifecycle", () => {
 	});
 
 	afterEach(async () => {
-		await session?.dispose();
-		session = undefined;
-		resetMemoryForTests();
-		vi.restoreAllMocks();
-		authStorage.close();
-		// `Settings.loadIsolated` opens agent.db under tempDir; close it before the directory goes away.
-		AgentStorage.close();
-		tempDir.removeSync();
+		try {
+			await session?.dispose();
+			session = undefined;
+			resetMemoryForTests();
+			vi.restoreAllMocks();
+			authStorage.close();
+			// `Settings.loadIsolated` opens agent.db under tempDir; close it before the directory goes away.
+			AgentStorage.close();
+			tempDir.removeSync();
+		} finally {
+			for (const [key, value] of Object.entries(mem0Env)) restoreEnvValue(key, value);
+		}
 	});
 
 	function createSession(createMemoryTools: () => Promise<AgentTool[]>): AgentSession {

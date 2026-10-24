@@ -1319,10 +1319,10 @@ export class SessionAdvisors {
 			if (config.instructions?.trim()) systemPrompt.push(config.instructions.trim());
 
 			// The default roster additionally gets `recall` when the active memory
-			// backend built it (MemoryRecallTool.createIf — hindsight/mnemopi only;
-			// sharpshooter/local expose no recall tool, so the extra name filters
-			// nothing there). The advisor's instance reads the same bank as the
-			// primary. Explicit `tools` lists stay user-owned and are not widened.
+			// backend built it (MemoryRecallTool.createIf); backends without a
+			// recall tool are filtered out. The advisor's instance reads the same
+			// memory scope as the primary. Explicit `tools` lists stay user-owned
+			// and are not widened.
 			const names =
 				config.tools === undefined ? new Set([...ADVISOR_DEFAULT_TOOL_NAMES, "recall"]) : new Set(config.tools);
 			const tools = (this.#advisorTools ?? []).filter(t => names.has(t.name));

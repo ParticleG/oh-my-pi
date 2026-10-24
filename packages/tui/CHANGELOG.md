@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added a Mem0 section to the Memory settings tab for the native OSS backend.
 - Added `footerMeta` to `OutputBlockOptions` and `ToolCardSnapshot` to draw short facts inside a frame's bottom border ([#16486](https://github.com/can1357/oh-my-pi/pull/16486) by [@H4vC](https://github.com/H4vC))
 
 ### Changed

@@ -52,7 +52,7 @@ export class MemoryRecallTool implements AgentTool<typeof memoryRecallSchema> {
 						{
 							type: "text",
 							text: items.length
-								? formatMem0Memories(items, state.config.recallMaxChars)
+								? `Found ${items.length} relevant ${items.length === 1 ? "memory" : "memories"} (as of ${formatCurrentTime()} UTC):\n\n${formatMem0Memories(items, state.config.recallMaxChars)}`
 								: "No relevant memories found.",
 						},
 					],
